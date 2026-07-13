@@ -27,14 +27,23 @@ const pool = new Pool({
 });
 
 io.on('connection', (socket) => {
-  console.log(`System Alert: Session connected! ID: ${socket.id}`);
+  console.log(`System Socket Connection Established: ${socket.id}`);
+  
+  // Clients join a specific department room to restrict real-time message scope
+  socket.on('join_department_room', (departmentId) => {
+    Array.from(socket.rooms).forEach(room => {
+      if(room.startsWith('dept_')) socket.leave(room);
+    });
+    socket.join(`dept_${departmentId}`);
+    console.log(`Socket ${socket.id} subscribed to department stream room: dept_${departmentId}`);
+  });
 });
 
-// --- HELPER FUNCTION: GET ACTIVE QUEUE FOR A SPECIFIC WARD ---
+// Helper function to pull the isolated active queue for a specific department room segment
 async function getCleanQueue(departmentId) {
   const cleanId = parseInt(departmentId, 10); 
   const queryText = `
-    SELECT id, token_number, status, priority, created_at, itinerary_id, step_sequence
+    SELECT id, token_number, status, priority, created_at, itinerary_id, step_sequence, doctor_id
     FROM itinerary_steps 
     WHERE department_id = $1 AND status IN ('WAITING', 'CALLED', 'IN_CONSULTATION')
     ORDER BY 
@@ -46,22 +55,56 @@ async function getCleanQueue(departmentId) {
   return result.rows;
 }
 
-// --- AUTHENTICATION ENDPOINTS ---
-app.post('/api/auth/signup', async (req, res) => {
+// --- GENERAL APPLICATION METADATA LOOKUPS ---
+app.get('/api/metadata/facilities', async (req, res) => {
   try {
-    const { username, email, password, role } = req.body;
+    const depts = await pool.query('SELECT id, name, code FROM departments ORDER BY name ASC');
+    const docs = await pool.query('SELECT id, name, department_id, room_number FROM doctors WHERE is_available = true');
+    res.json({ departments: depts.rows, doctors: docs.rows });
+  } catch (err) {
+    res.status(500).send("Metadata retrieval error");
+  }
+});
+
+// --- AUTHENTICATION ENDPOINTS (WITH TRANSACTIONAL EXTRACTION LOGIC) ---
+app.post('/api/auth/signup', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { username, email, password, role, departmentId, roomNumber } = req.body;
+    
+    await client.query('BEGIN');
+
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    const newUser = await pool.query(
-      `INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role`,
+    const userResult = await client.query(
+      `INSERT INTO users (username, email, password_hash, role) 
+       VALUES ($1, $2, $3, $4) RETURNING id, username, email, role`,
       [username, email, passwordHash, role]
     );
+    
+    const newUser = userResult.rows[0];
 
-    res.status(201).json({ message: "User registered successfully", user: newUser.rows[0] });
+    if (role === 'DOCTOR') {
+      if (!departmentId || !roomNumber) {
+        throw new Error("Doctor profiles require explicit department and room allocation parameters.");
+      }
+
+      await client.query(
+        `INSERT INTO doctors (name, department_id, is_available, room_number, user_id) 
+         VALUES ($1, $2, true, $3, $4)`,
+        [username, parseInt(departmentId, 10), roomNumber, newUser.id]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json({ message: "User profile successfully instantiated", user: newUser });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Registration error (User might already exist)");
+    await client.query('ROLLBACK');
+    console.error("Signup Transaction Aborted:", err.message);
+    res.status(500).json({ error: "Registration processing trace fault", details: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -69,68 +112,84 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-
     if (userResult.rows.length === 0) return res.status(400).json({ error: "Invalid Credentials" });
     
     const user = userResult.rows[0];
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) return res.status(400).json({ error: "Invalid Credentials" });
 
+    let doctorContext = null;
+    if (user.role === 'DOCTOR') {
+      const docRes = await pool.query('SELECT id, name, department_id, room_number FROM doctors WHERE user_id = $1', [user.id]);
+      if (docRes.rows.length > 0) doctorContext = docRes.rows[0];
+    }
+
     const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
-    res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+    res.json({ 
+      token, 
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        role: user.role,
+        doctorInfo: doctorContext 
+      } 
+    });
   } catch (err) {
     res.status(500).send("Login server error");
   }
 });
 
-// --- PATIENT ROUTING SYSTEM ENGINE (GENERATE SYSTEM ITINERARY) ---
+// --- LOGISTICS COMPONENT: APPOINTMENT BOOKING ENGINE ---
 app.post('/api/itinerary/create', async (req, res) => {
   try {
-    const { patientId, departmentIds, priority } = req.body; // e.g., departmentIds = [1, 3] (Cardiology, Scans)
+    const { patientId, departmentId, doctorId, priority } = req.body;
 
-    // 1. Instantiate Parent Itinerary
     const newItinerary = await pool.query(
       `INSERT INTO patient_itineraries (patient_id) VALUES ($1) RETURNING id`, [patientId]
     );
     const itineraryId = newItinerary.rows[0].id;
     const generatedToken = `CF-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // 2. Optimization Rule Strategy: Sort target sequences based on least crowded departments
-    const countsResult = await pool.query(
-      `SELECT department_id, COUNT(*) as count FROM itinerary_steps WHERE status = 'WAITING' GROUP BY department_id`
+    await pool.query(
+      `INSERT INTO itinerary_steps (itinerary_id, department_id, doctor_id, step_sequence, priority, token_number, status) 
+       VALUES ($1, $2, $3, 1, $4, $5, 'WAITING')`,
+      [itineraryId, departmentId, doctorId, priority || 'MEDIUM', generatedToken]
     );
-    const countMap = {};
-    countsResult.rows.forEach(row => { countMap[row.department_id] = parseInt(row.count, 10); });
 
-    const sortedDepts = departmentIds.sort((a, b) => (countMap[a] || 0) - (countMap[b] || 0));
+    const freshData = await getCleanQueue(departmentId);
+    io.to(`dept_${departmentId}`).emit('queue_updated', { departmentId, queue: freshData });
+    io.emit('patient_movement_trigger', { itineraryId });
 
-    // 3. Populate sequences sequentially into the DB
-    for (let i = 0; i < sortedDepts.length; i++) {
-      await pool.query(
-        `INSERT INTO itinerary_steps (itinerary_id, department_id, step_sequence, priority, token_number, status) 
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [itineraryId, sortedDepts[i], i + 1, priority || 'MEDIUM', generatedToken, i === 0 ? 'WAITING' : 'WAITING']
-      );
-    }
-
-    // Broadcast the initial update to the first department's display room board
-    const freshData = await getCleanQueue(sortedDepts[0]);
-    io.emit('queue_updated', { departmentId: sortedDepts[0], queue: freshData });
-
-    res.json({ message: "Routing plan established!", token: generatedToken, itineraryId });
+    res.json({ message: "Appointment registered!", token: generatedToken });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Failed to create routing ticket tracking strategy");
+    res.status(500).send("Appointment generation fault");
   }
 });
 
-// --- PATIENT: FETCH PERSONAL DAILY TIMELINE TRACKER ---
+// --- DATA READ ENDPOINTS ---
+app.get('/api/doctor/queue/:doctorId', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, token_number, status, priority, itinerary_id, step_sequence, department_id 
+      FROM itinerary_steps
+      WHERE doctor_id = $1 AND status IN ('WAITING', 'CALLED', 'IN_CONSULTATION')
+      ORDER BY CASE priority WHEN 'EMERGENCY' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 4 END ASC, created_at ASC`,
+      [req.params.doctorId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).send("Error reading operator lineup");
+  }
+});
+
 app.get('/api/itinerary/patient/:patientId', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT s.token_number, d.name as department_name, s.status, s.step_sequence, s.priority
+      SELECT s.token_number, d.name as department_name, doc.name as doctor_name, s.status, s.step_sequence, s.priority, doc.room_number
       FROM itinerary_steps s
       JOIN departments d ON s.department_id = d.id
+      JOIN doctors doc ON s.doctor_id = doc.id
       JOIN patient_itineraries i ON s.itinerary_id = i.id
       WHERE i.patient_id = $1 AND i.date = CURRENT_DATE
       ORDER BY s.step_sequence ASC`, 
@@ -138,92 +197,64 @@ app.get('/api/itinerary/patient/:patientId', async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).send("Error reading live tracking context");
+    res.status(500).send("Error fetching patient timeline profile");
   }
 });
 
-// --- COMPATIBILITY ENDPOINTS (ADAPTED FOR THE NEW ITINERARY SCHEMA) ---
 app.get('/api/queue/:deptId', async (req, res) => {
   try {
     const data = await getCleanQueue(req.params.deptId);
     res.json(data);
   } catch (err) {
-    res.status(500).send("Server Error fetching queue");
+    res.status(500).send("Server Error");
   }
 });
 
-// PATCH endpoint triggered by Doctors to call the next patient
+// --- DISPATCH ACTIONS ---
 app.patch('/api/queue/next', async (req, res) => {
   try {
     const { doctorId, departmentId } = req.body;
-    const cleanDeptId = parseInt(departmentId, 10);
 
     const findNextPatientQuery = `
-      SELECT id, itinerary_id, step_sequence FROM itinerary_steps 
-      WHERE department_id = $1 AND status = 'WAITING'
+      SELECT id, itinerary_id FROM itinerary_steps 
+      WHERE doctor_id = $1 AND department_id = $2 AND status = 'WAITING'
       ORDER BY CASE priority WHEN 'EMERGENCY' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 4 END ASC, 
       created_at ASC LIMIT 1;
     `;
-    const nextPatientResult = await pool.query(findNextPatientQuery, [cleanDeptId]);
-
-    if (nextPatientResult.rows.length === 0) {
-      return res.json({ message: "No patients waiting in this ward segment." });
-    }
+    const nextPatientResult = await pool.query(findNextPatientQuery, [doctorId, departmentId]);
+    if (nextPatientResult.rows.length === 0) return res.json({ message: "Queue Clear." });
 
     const currentStep = nextPatientResult.rows[0];
-
-    // Transition the current step from WAITING to CALLED
-    const updateCurrentStep = await pool.query(
-      `UPDATE itinerary_steps SET status = 'CALLED', doctor_id = $1, called_at = CURRENT_TIMESTAMP
-       WHERE id = $2 RETURNING token_number, status`,
-      [doctorId, currentStep.id]
+    await pool.query(
+      `UPDATE itinerary_steps SET status = 'CALLED', called_at = CURRENT_TIMESTAMP WHERE id = $1`, [currentStep.id]
     );
 
-    const freshQueueData = await getCleanQueue(cleanDeptId);
-    io.emit('queue_updated', { departmentId: cleanDeptId, queue: freshQueueData });
+    const freshQueueData = await getCleanQueue(departmentId);
+    io.to(`dept_${departmentId}`).emit('queue_updated', { departmentId, queue: freshQueueData });
     io.emit('patient_movement_trigger', { itineraryId: currentStep.itinerary_id });
 
-    res.json({ message: "Dispatched successfully", patient: updateCurrentStep.rows[0] });
+    res.json({ message: "Patient Called Successfully" });
   } catch (err) {
-    res.status(500).send("Server Error updating tracking steps");
+    res.status(500).send("Dispatch transaction fault");
   }
 });
 
-// --- NEW ACTION TRIGGER: COMPLETING A STEP AND ROUTING TO NEXT LOCATION ---
 app.post('/api/queue/complete', async (req, res) => {
   try {
-    const { stepId, itineraryId, currentSequence, departmentId } = req.body;
+    const { stepId, itineraryId, departmentId } = req.body;
+    await pool.query(`UPDATE itinerary_steps SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [stepId]);
 
-    // 1. Complete current operation status block
-    await pool.query(
-      `UPDATE itinerary_steps SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [stepId]
-    );
-
-    // 2. Inform the current department board that the patient left
     const freshCurrentDeptData = await getCleanQueue(departmentId);
-    io.emit('queue_updated', { departmentId, queue: freshCurrentDeptData });
-
-    // 3. Fetch the next scheduled step for this patient's routing plan
-    const nextStepResult = await pool.query(
-      `SELECT department_id FROM itinerary_steps WHERE itinerary_id = $1 AND step_sequence = $2`,
-      [itineraryId, parseInt(currentSequence, 10) + 1]
-    );
-
-    if (nextStepResult.rows.length > 0) {
-      const nextDeptId = nextStepResult.rows[0].department_id;
-      const freshNextDeptData = await getCleanQueue(nextDeptId);
-      // Let the next ward know someone is heading their way
-      io.emit('queue_updated', { departmentId: nextDeptId, queue: freshNextDeptData });
-    }
-
+    io.to(`dept_${departmentId}`).emit('queue_updated', { departmentId, queue: freshCurrentDeptData });
     io.emit('patient_movement_trigger', { itineraryId });
-    res.json({ message: "Step completed. Patient advanced." });
+
+    res.json({ message: "Checkup complete." });
   } catch (err) {
-    res.status(500).send("Engine error managing transfer context");
+    res.status(500).send("Discharge event tracking fault");
   }
 });
 
 const PORT = 5000;
 server.listen(PORT, () => {
-  console.log(`CURA FLOW Engine upgraded: live on http://localhost:${PORT}`);
+  console.log(`CURAFLOW Central Network Hub live on http://127.0.0.1:${PORT}`);
 });
