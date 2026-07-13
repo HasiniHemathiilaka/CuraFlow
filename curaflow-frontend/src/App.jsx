@@ -21,7 +21,7 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [activeView, setActiveView] = useState('monitor'); 
   
-  // Auth & System Profiles Metadata
+  // Auth profiles
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login');
   const [username, setUsername] = useState('');
@@ -31,12 +31,13 @@ function App() {
   
   const [systemDepts, setSystemDepts] = useState([]);
   const [systemDocs, setSystemDocs] = useState([]);
+  const [activeNotification, setActiveNotification] = useState(null);
 
-  // Selection configurations
+  // Workflow path parameters
   const [tvSelectedDept, setTvSelectedDept] = useState('');
-  const [bookingDept, setBookingDept] = useState('');
-  const [bookingDoc, setBookingDoc] = useState('');
-  const [bookingPriority, setBookingPriority] = useState('MEDIUM');
+  const [selectedDeptId, setSelectedDeptId] = useState('');
+  const [selectedDocId, setSelectedDocId] = useState('');
+  const [appointmentCart, setAppointmentCart] = useState([]); 
   const [patientItinerary, setPatientItinerary] = useState([]);
 
   const loadMetadata = () => {
@@ -45,11 +46,9 @@ function App() {
       .then(data => {
         setSystemDepts(data.departments);
         setSystemDocs(data.doctors);
-        
-        // Safety lock: Only set initial state defaults if not already populated
         if (data.departments.length > 0) {
-          setBookingDept(prev => prev || data.departments[0].id);
-          setTvSelectedDept(prev => prev || data.departments[0].id);
+          setTvSelectedDept(data.departments[0].id);
+          setSelectedDeptId(data.departments[0].id);
         }
       }).catch(err => console.error(err));
   };
@@ -76,36 +75,40 @@ function App() {
       .catch(err => console.error(err));
   };
 
-  // LOOP A: Enforce database configurations download EXACTLY once on mount
-  useEffect(() => {
-    loadMetadata();
-  }, []);
+  useEffect(() => { loadMetadata(); }, []);
 
-  // LOOP B: Manage continuous real-time system network events 
   useEffect(() => {
     socket.on("connect", () => setIsConnected(true));
     socket.on("disconnect", () => setIsConnected(false));
-
+    
     socket.on("queue_updated", (data) => {
       if (activeView === 'monitor' && Number(data.departmentId) === Number(tvSelectedDept)) {
         setQueue(data.queue);
       }
     });
-
+    
+    socket.on("appointment_called_alert", (data) => {
+      setActiveNotification(data.message);
+      if (window.alert) window.alert(data.message);
+    });
+    
     socket.on("patient_movement_trigger", () => {
+      loadMetadata(); // Dynamic velocity metrics recalculation refresh toggle hook
       if (user && user.role === 'PATIENT') fetchPatientItinerary(user.id);
       if (user && user.role === 'DOCTOR') fetchDoctorQueue(user.doctorInfo.id);
     });
 
     return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("queue_updated");
+      socket.off("connect"); socket.off("disconnect");
+      socket.off("queue_updated"); socket.off("appointment_called_alert");
       socket.off("patient_movement_trigger");
     };
   }, [activeView, tvSelectedDept, user]);
 
-  // LOOP C: Room adjustments on view changes
+  useEffect(() => {
+    if (user) socket.emit('register_user_notification_channel', user.id);
+  }, [user]);
+
   useEffect(() => {
     if (activeView === 'monitor' && tvSelectedDept) {
       socket.emit('join_department_room', tvSelectedDept);
@@ -118,20 +121,18 @@ function App() {
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/signup';
-    
     let payload = { email, password };
     if (authMode === 'signup') {
       payload = { 
         username, email, password, role: userRole,
-        departmentId: bookingDept, 
+        departmentId: selectedDeptId, 
         roomNumber: username.toUpperCase() + "_RM" + Math.floor(100 + Math.random() * 900)
       };
     }
 
     try {
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const data = await res.json();
@@ -139,7 +140,7 @@ function App() {
       
       if (authMode === 'signup') {
         setAuthMode('login');
-        return alert("Registration complete. Initialize sign in phase.");
+        return alert("Registration successful.");
       }
 
       setUser(data.user);
@@ -147,16 +148,40 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
-  const handleBookAppointment = async (e) => {
+  const handleLogout = () => {
+    setUser(null);
+    setPatientItinerary([]);
+    setAppointmentCart([]);
+    setEmail('');
+    setPassword('');
+    setUsername('');
+    setActiveNotification(null);
+    setActiveView('patient'); 
+  };
+
+  const addToCart = () => {
+    if (!selectedDeptId || !selectedDocId) return alert("Select department and doctor fields.");
+    const dept = systemDepts.find(d => Number(d.id) === Number(selectedDeptId));
+    const doc = systemDocs.find(d => Number(d.id) === Number(selectedDocId));
+    
+    if (appointmentCart.some(item => item.departmentId === dept.id)) {
+      return alert("You have already added this department to your journey.");
+    }
+    setAppointmentCart([...appointmentCart, { departmentId: dept.id, departmentName: dept.name, doctorId: doc.id, doctorName: doc.name }]);
+  };
+
+  const dispatchMultiItinerary = async (e) => {
     e.preventDefault();
-    if(!bookingDoc) return alert("Select a practitioner target.");
+    if (appointmentCart.length === 0) return alert("Your routing basket is empty.");
     try {
-      await fetch(`${BACKEND_URL}/api/itinerary/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patientId: user.id, departmentId: bookingDept, doctorId: bookingDoc, priority: bookingPriority })
+      const res = await fetch(`${BACKEND_URL}/api/itinerary/create-multi`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patientId: user.id, appointments: appointmentCart })
       });
-      alert("Appointment queued successfully.");
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Journey orchestration conflict trace.");
+      alert(`Journey created! Token: ${data.token}`);
+      setAppointmentCart([]);
       fetchPatientItinerary(user.id);
     } catch(err) { console.error(err); }
   };
@@ -164,8 +189,7 @@ function App() {
   const handleCallNext = async () => {
     try {
       await fetch(`${BACKEND_URL}/api/queue/next`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ doctorId: user.doctorInfo.id, departmentId: user.doctorInfo.department_id }),
       });
       fetchDoctorQueue(user.doctorInfo.id);
@@ -175,8 +199,7 @@ function App() {
   const handleCompleteStep = async (stepId, itineraryId) => {
     try {
       await fetch(`${BACKEND_URL}/api/queue/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stepId, itineraryId, departmentId: user.doctorInfo.department_id }),
       });
       fetchDoctorQueue(user.doctorInfo.id);
@@ -199,12 +222,25 @@ function App() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111622', padding: '16px 40px', borderBottom: '1px solid #1f293d' }}>
         <h1 style={{ fontSize: '1.1rem', color: '#fff', margin: 0, letterSpacing: '1px' }}>SYS.CURAFLOW // V4.0</h1>
         <div style={{ display: 'flex', gap: '25px', alignItems: 'center' }}>
+          
+          {user && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#0b0e14', padding: '4px 12px', borderRadius: '6px', border: '1px solid #1f293d' }}>
+              <span style={{ fontSize: '0.75rem', color: '#8a99ad' }}>
+                ID: <strong style={{ color: '#fff' }}>{user.username.toUpperCase()}</strong> ({user.role})
+              </span>
+              <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff7675', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold', padding: '0 0 0 8px', borderLeft: '1px solid #1f293d' }}>
+                [LOGOUT]
+              </button>
+            </div>
+          )}
+
           <span style={{ padding: '2px 8px', borderRadius: '4px', border: `1px solid ${isConnected ? '#2ecc71' : '#e74c3c'}`, color: isConnected ? '#2ecc71' : '#e74c3c', fontSize: '0.75rem' }}>
             {isConnected ? "● NET_OK" : "▲ NET_ERR"}
           </span>
+          
           <div style={{ background: '#0b0e14', padding: '3px', borderRadius: '6px', display: 'flex', border: '1px solid #1f293d' }}>
             {['monitor', 'doctor', 'patient'].map((v) => (
-              <button key={v} onClick={() => setActiveView(v)} style={{ padding: '6px 14px', background: activeView === v ? '#1f293d' : 'transparent', color: activeView === v ? '#00ced1' : '#576574', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <button key={v} onClick={() => setActiveView(v)} style={{ padding: '6px 14px', background: activeView === v ? '#1f293d' : 'transparent', color: activeView === v ? '#00ced1' : '#576574', border: 'none', cursor: 'pointer', fontSize: '0.75rem' }}>
                 {v === 'monitor' ? 'DEPT_TV' : v === 'doctor' ? 'CTRL_STATION' : 'USER_PORTAL'}
               </button>
             ))}
@@ -212,68 +248,82 @@ function App() {
         </div>
       </div>
 
+      {activeNotification && (
+        <div style={{ background: '#2d1418', color: '#ff7675', borderBottom: '1px solid #e74c3c', padding: '14px 40px', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{activeNotification}</span>
+          <button onClick={() => setActiveNotification(null)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}>[DISMISS]</button>
+        </div>
+      )}
+
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '40px' }}>
         
-        {/* VIEW 1: DYNAMIC ISOLATED DEPARTMENT SIGNAGE MOUNT */}
+        {/* VIEW 1: DYNAMIC MONITORS WITH INTELLIGENT REAL-TIME ETA OVERLAYS */}
         {activeView === 'monitor' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1f293d', paddingBottom: '15px', marginBottom: '30px' }}>
-              <h2 style={{ fontSize: '1rem', margin: 0 }}>[DEPT_LIVE_SCREEN_MATRIX]</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '0.75rem', color: '#576574' }}>SELECT ACTIVE WARD TV HARDWARE VIEW:</span>
-                <select 
-                  value={tvSelectedDept} 
-                  onChange={e => {
-                    const nextId = Number(e.target.value);
-                    setTvSelectedDept(nextId);
-                    setBookingDept(nextId); 
-                  }} 
-                  style={{ background: '#111622', color: '#00ced1', border: '1px solid #1f293d', padding: '6px', borderRadius: '4px', fontFamily: 'monospace', cursor: 'pointer' }}
-                >
-                  {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name.toUpperCase()} [{d.code}]</option>)}
-                </select>
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1f293d', paddingBottom: '15px', marginBottom: '35px' }}>
+              <h2>[DEPT_LIVE_SCREEN_MATRIX]</h2>
+              <select value={tvSelectedDept} onChange={e => setTvSelectedDept(Number(e.target.value))} style={{ background: '#111622', color: '#00ced1', border: '1px solid #1f293d', padding: '6px', fontFamily: 'monospace', cursor: 'pointer' }}>
+                {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name.toUpperCase()}</option>)}
+              </select>
             </div>
-            
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
-              {queue.length === 0 ? <p style={{ color: '#4b5563' }}>NO ACTIVE TICKET SLICES GENERATED OUTSIDE THIS CLINIC SEGMENT.</p> : 
-                queue.map((p) => (
-                  <div key={p.id} style={{ background: p.status === 'CALLED' ? '#12252e' : '#111622', border: p.status === 'CALLED' ? '1px solid #00ced1' : '1px solid #1f293d', padding: '30px 24px', borderRadius: '8px', animation: p.status === 'CALLED' ? 'pulse-border 2s infinite ease-in-out' : 'none' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '0.7rem' }}>
-                      <span style={{ color: p.status === 'CALLED' ? '#00ced1' : '#576574' }}>{p.status === 'CALLED' ? '◀ DISPATCH ACTIVE' : '📟 ENQUEUED'}</span>
-                      <span style={{ color: '#fff', background: '#1f293d', padding: '2px 6px' }}>{p.status}</span>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
+              {systemDocs.filter(d => Number(d.department_id) === Number(tvSelectedDept)).map(doc => {
+                const docQueue = queue.filter(p => Number(p.doctor_id) === Number(doc.id));
+                // ENHANCED MATRIX CALCULATOR: Uses actual historical average shift speeds rather than hardcoded metrics
+                const dynamicWaitTime = docQueue.filter(p => p.status === 'WAITING').length * (doc.average_speed || 15);
+                
+                return (
+                  <div key={doc.id} style={{ background: '#111622', border: '1px solid #1f293d', borderRadius: '8px', padding: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px dashed #1f293d', paddingBottom: '12px', marginBottom: '20px' }}>
+                      <h3 style={{ margin: 0, color: '#fff' }}>👩‍⚕️ {doc.name.toUpperCase()} (Room {doc.room_number})</h3>
+                      <div style={{ display: 'flex', gap: '20px', fontSize: '0.8rem' }}>
+                        <span style={{ color: '#8a99ad' }}>⚡ SPEED: {doc.average_speed || 15} MIN/PATIENT</span>
+                        <span style={{ color: '#00ced1', fontWeight: 'bold' }}>EST_WAIT: ~{dynamicWaitTime} MINS</span>
+                      </div>
                     </div>
-                    <h3 style={{ fontSize: '2.5rem', margin: 0, color: '#fff' }}>{p.token_number}</h3>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '15px' }}>
+                      {docQueue.length === 0 ? <p style={{ color: '#4b5563', margin: 0, fontSize: '0.8rem' }}>NO ACTIVE TICKETS ENQUEUED.</p> : 
+                        docQueue.map(p => (
+                          <div key={p.id} style={{ background: p.status === 'CALLED' ? '#12252e' : '#0b0e14', border: p.status === 'CALLED' ? '1px solid #00ced1' : '1px solid #1f293d', padding: '20px', borderRadius: '6px', animation: p.status === 'CALLED' ? 'pulse-border 2s infinite ease-in-out' : 'none' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', marginBottom: '8px' }}>
+                              <span style={{ color: p.status === 'CALLED' ? '#00ced1' : '#576574' }}>{p.status === 'CALLED' ? '◀ PROCEED TO ROOM' : '📟 WAITING'}</span>
+                              <span style={{ background: '#1f293d', color: '#fff', padding: '1px 5px' }}>{p.status}</span>
+                            </div>
+                            <h4 style={{ margin: 0, fontSize: '1.8rem', color: '#fff', textAlign: 'center' }}>{p.token_number}</h4>
+                          </div>
+                        ))
+                      }
+                    </div>
                   </div>
-                ))
-              }
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* VIEW 2: ISOLATED DOCTOR TREATMENT CONSOLE */}
+        {/* VIEW 2: ISOLATED DOCTOR CONSOLE */}
         {activeView === 'doctor' && (
           <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-            {!user || user.role !== 'DOCTOR' ? <p style={{ color: '#576574' }}>ACCESS PROHIBITED. DOCK INTO SECURE USER_PORTAL CONSOLE AS A DOCTOR TO ACQUIRE WORKSPACE CONTEXT.</p> : (
+            {!user || user.role !== 'DOCTOR' ? <p style={{ color: '#576574' }}>ACCESS PROHIBITED. LOG INTO USER_PORTAL CONSOLE AS A DOCTOR.</p> : (
               <div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '20px', marginBottom: '30px' }}>
                   <div style={{ background: '#111622', padding: '24px', borderRadius: '8px', border: '1px solid #1f293d' }}>
-                    <div style={{ fontSize: '0.7rem', color: '#576574' }}>OPERATOR CONTEXT PROFILE INJECTED</div>
-                    <h2 style={{ fontSize: '1.2rem', margin: '5px 0', color: '#fff' }}>{user.doctorInfo?.name.toUpperCase()} // Room {user.doctorInfo?.room_number}</h2>
-                    <div style={{ fontSize: '0.75rem', color: '#00ced1' }}>ISOLATED WORKSPACE DEPLOYMENT QUEUE</div>
+                    <h2>{user.doctorInfo?.name.toUpperCase()} // Room {user.doctorInfo?.room_number}</h2>
+                    <span style={{ color: '#00ced1', fontSize: '0.75rem' }}>ISOLATED CLINIC QUEUE ENGINE RUNNING</span>
                   </div>
                   <button onClick={handleCallNext} style={{ background: '#1f293d', color: '#00ced1', border: '1px solid #00ced1', borderRadius: '8px', cursor: 'pointer', fontWeight: '700' }}>⚡ DISPATCH NEXT REQ</button>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {queue.length === 0 ? <p style={{ color: '#4b5563' }}>NO WAITING APPOINTMENTS ASSIGNED TO YOUR OPERATOR ID TODAY.</p> :
+                  {queue.length === 0 ? <p style={{ color: '#4b5563' }}>NO WAITING APPOINTMENTS ASSIGNED TO YOUR WORKSPACE TODAY.</p> :
                     queue.map((p) => (
                       <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#111622', padding: '14px 20px', borderRadius: '6px', border: '1px solid #1f293d' }}>
                         <span style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 'bold' }}>&gt; {p.token_number}</span>
-                        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                          <span style={{ background: getPriorityStyle(p.priority).bg, color: getPriorityStyle(p.priority).text, border: `1px solid ${getPriorityStyle(p.priority).border}`, padding: '3px 8px', fontSize: '0.7rem' }}>{p.priority}</span>
+                        <div>
                           {p.status === 'CALLED' && (
-                            <button onClick={() => handleCompleteStep(p.id, p.itinerary_id)} style={{ padding: '6px 12px', background: '#2ecc71', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>✓ COMPLETE VISIT</button>
+                            <button onClick={() => handleCompleteStep(p.id, p.itinerary_id)} style={{ padding: '6px 12px', background: '#2ecc71', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px', marginRight: '10px' }}>✓ DISCHARGE & ROUTE NEXT</button>
                           )}
                           <span style={{ fontSize: '0.8rem', color: '#576574' }}>{p.status}</span>
                         </div>
@@ -286,9 +336,9 @@ function App() {
           </div>
         )}
 
-        {/* VIEW 3: INTEGRATED DUAL GATEWAY LOGINS & DISCRETE APPOINTMENT ENGINE */}
+        {/* VIEW 3: USER PORTAL GATEWAY */}
         {activeView === 'patient' && (
-          <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+          <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
             {!user ? (
               <div style={{ maxWidth: '450px', margin: '0 auto', background: '#111622', padding: '35px', borderRadius: '12px', border: '1px solid #1f293d' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-around', marginBottom: '25px', borderBottom: '1px solid #1f293d', paddingBottom: '10px' }}>
@@ -315,7 +365,7 @@ function App() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '12px', background: 'rgba(0, 206, 209, 0.03)', border: '1px dashed #1f293d', borderRadius: '6px', fontSize: '0.8rem' }}>
                           <span style={{ color: '#00ced1' }}>[MANDATORY_DOCTOR_ASSIGNMENT_METADATA]</span>
                           <span style={{ marginTop: '5px' }}>SELECT DEPLOYMENT WARD DEPARTMENT:</span>
-                          <select value={bookingDept} onChange={e => setBookingDept(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '8px', border: '1px solid #1f293d', borderRadius: '4px', fontFamily: 'monospace' }} required>
+                          <select value={selectedDeptId} onChange={e => setSelectedDeptId(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '8px', border: '1px solid #1f293d', borderRadius: '4px', fontFamily: 'monospace' }} required>
                             {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                           </select>
                         </div>
@@ -328,63 +378,54 @@ function App() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
                 
-                {/* Left Component: Dynamic Clinic Booking Portal Form */}
+                {/* Left Component: Cart */}
                 <div style={{ background: '#111622', padding: '30px', borderRadius: '12px', border: '1px solid #1f293d' }}>
                   <div style={{ fontSize: '0.75rem', color: '#576574' }}>SESSION ACTIVE // {user.role}</div>
                   <h3 style={{ margin: '5px 0 25px 0', color: '#fff' }}>IDENTITY: {user.username.toUpperCase()}</h3>
                   
                   {user.role === 'PATIENT' ? (
-                    <form onSubmit={handleBookAppointment} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      <div style={{ fontSize: '0.85rem', color: '#fff', borderBottom: '1px solid #1f293d', paddingBottom: '6px' }}>[BOOK_CLINICAL_APPOINTMENT]</div>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
-                        <span>SELECT TARGET CLINIC SEGMENT:</span>
-                        <select value={bookingDept} onChange={e => { setBookingDept(e.target.value); setBookingDoc(''); }} style={{ background: '#0b0e14', color: '#fff', padding: '10px', border: '1px solid #1f293d', borderRadius: '6px', fontFamily: 'monospace' }}>
+                    <div>
+                      <h4>[COMPILE COMPREHENSIVE PATH JOURNEY]</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
+                        <select value={selectedDeptId} onChange={e => { setSelectedDeptId(e.target.value); setSelectedDocId(''); }} style={{ background: '#0b0e14', color: '#fff', padding: '10px', border: '1px solid #1f293d' }}>
+                          <option value="">-- SELECT CLINIC WARD --</option>
                           {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
-                      </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
-                        <span>ASSIGN MEDICAL PRACTITIONER:</span>
-                        <select value={bookingDoc} onChange={e => setBookingDoc(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '10px', border: '1px solid #1f293d', borderRadius: '6px', fontFamily: 'monospace' }} required>
-                          <option value="">-- CHOOSE PRACTITIONER --</option>
-                          {systemDocs.filter(d => Number(d.department_id) === Number(bookingDept)).map(doc => (
-                            <option key={doc.id} value={doc.id}>{doc.name} (Room {doc.room_number})</option>
-                          ))}
+                        <select value={selectedDocId} onChange={e => setSelectedDocId(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '10px', border: '1px solid #1f293d' }} required>
+                          <option value="">-- SELECT SPECIALIST TARGET --</option>
+                          {systemDocs.filter(d => Number(d.department_id) === Number(selectedDeptId)).map(doc => <option key={doc.id} value={doc.id}>{doc.name}</option>)}
                         </select>
+
+                        <button type="button" onClick={addToCart} style={{ padding: '10px', background: '#1f293d', color: '#00ced1', border: '1px solid #00ced1', cursor: 'pointer', fontWeight: 'bold' }}>+ ADD VISIT TO JOURNEY</button>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
-                        <span>TRIAGE SEVERITY:</span>
-                        <select value={bookingPriority} onChange={e => setBookingPriority(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '6px', border: '1px solid #1f293d', fontFamily: 'monospace' }}>
-                          <option value="LOW">LOW</option>
-                          <option value="MEDIUM">MEDIUM</option>
-                          <option value="HIGH">HIGH</option>
-                          <option value="EMERGENCY">EMERGENCY</option>
-                        </select>
-                      </div>
-
-                      <button type="submit" style={{ width: '100%', padding: '12px', background: 'rgba(0, 206, 209, 0.1)', color: '#00ced1', border: '1px solid #00ced1', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}>✓ DISPATCH APPOINTMENT RESERVATION</button>
-                    </form>
+                      {appointmentCart.length > 0 && (
+                        <div style={{ marginTop: '25px', padding: '15px', background: '#0b0e14', border: '1px dashed #1f293d' }}>
+                          <span style={{ fontSize: '0.8rem', color: '#00ced1' }}>ROUTE PROGRESS SEQUENCE:</span>
+                          {appointmentCart.map((item, index) => <div key={index} style={{ fontSize: '0.85rem', color: '#fff', marginTop: '6px' }}>Stop {index+1}: {item.departmentName} ({item.doctorName})</div>)}
+                          <button onClick={dispatchMultiItinerary} style={{ width: '100%', marginTop: '15px', padding: '12px', background: '#2ecc71', color: '#fff', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}>✓ BOOK OPTIMIZED JOURNEY</button>
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    <p style={{ color: '#576574', fontSize: '0.85rem' }}>Logged into workspace under Doctor parameters. Use upper navigation deck toggles to pull your active clinic queue screens.</p>
+                    <p style={{ color: '#576574', fontSize: '0.85rem' }}>Logged in as Doctor operator. Use the upper navigation tabs to access your controller panels.</p>
                   )}
-                  <button onClick={() => { setUser(null); setPatientItinerary([]); }} style={{ width: '100%', marginTop: '20px', padding: '10px', background: '#1c1f26', color: '#9ca3af', border: 'none', cursor: 'pointer', borderRadius: '6px', fontSize: '0.8rem' }}>TERMINATE SESSION</button>
+                  <button onClick={handleLogout} style={{ width: '100%', marginTop: '20px', padding: '10px', background: '#1c1f26', color: '#ff7675', border: 'none', cursor: 'pointer', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 'bold' }}>TERMINATE SESSION [LOGOUT]</button>
                 </div>
 
-                {/* Right Component: Live Dynamic Patient Tracking Metrics Dashboard */}
+                {/* Right Component: Live Progress Metrics Tracker */}
                 <div style={{ background: '#111622', padding: '30px', borderRadius: '12px', border: '1px solid #1f293d' }}>
                   <div style={{ borderBottom: '1px solid #1f293d', paddingBottom: '15px', marginBottom: '20px', fontSize: '0.85rem', color: '#fff' }}>[DAILY_CLINICAL_ITINERARY_TRACKER]</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {patientItinerary.length === 0 ? <p style={{ color: '#4b5563', fontSize: '0.85rem' }}>NO ENQUEUED TICKETS OR WORKFLOW RECORDS FOUND TODAY.</p> :
+                    {patientItinerary.length === 0 ? <p style={{ color: '#4b5563', fontSize: '0.85rem' }}>NO ENQUEUED WORKFLOW RECORDS ENCOUNTERED TODAY.</p> :
                       patientItinerary.map((step, idx) => (
-                        <div key={idx} style={{ display: 'flex', gap: '15px', alignItems: 'center', background: '#0b0e14', padding: '14px', borderRadius: '6px', border: step.status === 'CALLED' ? '1px solid #00ced1' : '1px solid #1f293d' }}>
-                          <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: step.status === 'COMPLETED' ? '#2ecc71' : step.status === 'CALLED' ? '#00ced1' : '#1f293d', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', color: '#0b0e14', fontWeight: 'bold' }}>{step.step_sequence}</div>
-                          <div style={{ flex: 1, fontSize: '0.85rem' }}>
-                            <div style={{ color: '#fff', fontWeight: 'bold' }}>{step.department_name}</div>
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', background: '#0b0e14', padding: '14px', borderRadius: '6px', border: step.status === 'CALLED' ? '1px solid #00ced1' : '1px solid #1f293d', justifyContent: 'space-between' }}>
+                          <div>
+                            <div style={{ color: '#fff', fontWeight: 'bold' }}>{step.step_sequence}. {step.department_name}</div>
                             <div style={{ color: '#00ced1', fontSize: '0.75rem' }}>Doctor Ref: {step.doctor_name} (Room {step.room_number})</div>
                           </div>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: step.status === 'COMPLETED' ? '#2ecc71' : step.status === 'CALLED' ? '#00ced1' : '#4b5563' }}>{step.status}</span>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: step.status === 'COMPLETED' ? '#2ecc71' : step.status === 'CALLED' ? '#00ced1' : step.status === 'WAITING' ? '#f39c12' : '#4b5563' }}>{step.status}</span>
                         </div>
                       ))
                     }
