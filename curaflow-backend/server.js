@@ -66,7 +66,6 @@ async function getCleanQueue(departmentId) {
 }
 
 // --- NEW HELPER: DYNAMIC ETA ENGINE ---
-// Calculates the historical checkup speed per doctor during the current shift window
 async function getDoctorAverageSpeed(doctorId, start, end) {
   const queryText = `
     SELECT EXTRACT(EPOCH FROM (completed_at - called_at))/60 as duration
@@ -188,12 +187,13 @@ app.post('/api/itinerary/create-multi', async (req, res) => {
     }
     loadedDepts.sort((a, b) => a.count - b.count);
 
+    // FIXED: Ensured parameter ordering matching the 7 expected columns correctly
     for (let i = 0; i < loadedDepts.length; i++) {
       const initialStatus = (i === 0) ? 'WAITING' : 'PENDING';
       await client.query(
         `INSERT INTO itinerary_steps (itinerary_id, department_id, doctor_id, step_sequence, priority, token_number, status)
-         VALUES ($1, $2, $3, $4, 'MEDIUM', $5, $6)`,
-        [itineraryId, loadedDepts[i].departmentId, loadedDepts[i].doctorId, i + 1, tokenNumber, initialStatus]
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [itineraryId, loadedDepts[i].departmentId, loadedDepts[i].doctorId, i + 1, 'MEDIUM', tokenNumber, initialStatus]
       );
     }
 
@@ -229,8 +229,12 @@ app.get('/api/itinerary/patient/:patientId', async (req, res) => {
     const { start, end } = getOperationalWindow();
     const result = await pool.query(
       `SELECT s.token_number, d.name as department_name, doc.name as doctor_name, s.status, s.step_sequence, s.priority, doc.room_number
-       FROM itinerary_steps s JOIN departments d ON s.department_id = d.id JOIN doctors doc ON s.doctor_id = doc.id JOIN patient_itineraries i ON s.itinerary_id = i.id
-       WHERE i.patient_id = $1 AND s.created_at >= $2 AND s.created_at < $3 ORDER BY s.step_sequence ASC`,
+       FROM itinerary_steps s 
+       JOIN departments d ON s.department_id = d.id 
+       JOIN doctors doc ON s.doctor_id = doc.id 
+       JOIN patient_itineraries i ON s.itinerary_id = i.id
+       WHERE i.patient_id = $1 AND s.created_at >= $2 AND s.created_at < $3 
+       ORDER BY s.step_sequence ASC`,
       [req.params.patientId, start, end]
     );
     res.json(result.rows);

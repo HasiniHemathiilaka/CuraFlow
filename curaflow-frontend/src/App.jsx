@@ -4,13 +4,54 @@ import { io } from 'socket.io-client';
 const BACKEND_URL = "http://127.0.0.1:5000";
 const socket = io(BACKEND_URL);
 
+// Injection of ultra-high contrast dark mode tokens, readable typography, and bright action layouts
 if (typeof window !== 'undefined') {
   const style = document.createElement('style');
   style.innerHTML = `
-    @keyframes pulse-border {
-      0% { border-color: rgba(0, 206, 209, 0.2); box-shadow: 0 0 0 0 rgba(0, 206, 209, 0.2); }
-      50% { border-color: rgba(0, 206, 209, 0.8); box-shadow: 0 0 15px 2px rgba(0, 206, 209, 0.15); }
-      100% { border-color: rgba(0, 206, 209, 0.2); box-shadow: 0 0 0 0 rgba(0, 206, 209, 0.2); }
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@600&display=swap');
+    
+    :root {
+      --bg-main: #060913;      /* Deep obsidian background for zero glare */
+      --bg-card: #0f1524;      /* High contrast distinct card background */
+      --border-color: rgba(255, 255, 255, 0.12); /* Crisp, visible layout frames */
+      --text-main: #ffffff;    /* Absolute white for primary typography */
+      --text-muted: #94a3b8;   /* Clean silver-slate for minor context labels */
+      --primary: #00f2fe;      /* Ultra-bright neon cyan accent */
+      --primary-glow: rgba(0, 242, 254, 0.2);
+      --success: #10b981;      /* Vivid emerald green */
+      --success-glow: rgba(16, 185, 129, 0.15);
+      --error: #f43f5e;
+      --warning: #fbbf24;
+    }
+
+    * {
+      box-sizing: border-box;
+      transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    body {
+      margin: 0;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    @keyframes card-pulse-neon {
+      0% { border-color: rgba(0, 242, 254, 0.4); box-shadow: 0 0 0 0 rgba(0, 242, 254, 0.2); }
+      50% { border-color: rgba(0, 242, 254, 1); box-shadow: 0 0 25px 4px rgba(0, 242, 254, 0.35); }
+      100% { border-color: rgba(0, 242, 254, 0.4); box-shadow: 0 0 0 0 rgba(0, 242, 254, 0.2); }
+    }
+
+    .pulse-card-active {
+      animation: card-pulse-neon 1.8s infinite ease-in-out;
+    }
+
+    input, select {
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--primary) !important;
+      box-shadow: 0 0 0 3px var(--primary-glow);
     }
   `;
   document.head.appendChild(style);
@@ -77,6 +118,13 @@ function App() {
 
   useEffect(() => { loadMetadata(); }, []);
 
+  // AUTO-REFRESH FIX: Automatically recovers workflow records from DB upon user view activation or login state restoration
+  useEffect(() => {
+    if (activeView === 'patient' && user?.id && user.role === 'PATIENT') {
+      fetchPatientItinerary(user.id);
+    }
+  }, [activeView, user]);
+
   useEffect(() => {
     socket.on("connect", () => setIsConnected(true));
     socket.on("disconnect", () => setIsConnected(false));
@@ -93,7 +141,7 @@ function App() {
     });
     
     socket.on("patient_movement_trigger", () => {
-      loadMetadata(); // Dynamic velocity metrics recalculation refresh toggle hook
+      loadMetadata(); 
       if (user && user.role === 'PATIENT') fetchPatientItinerary(user.id);
       if (user && user.role === 'DOCTOR') fetchDoctorQueue(user.doctorInfo.id);
     });
@@ -181,7 +229,12 @@ function App() {
       const data = await res.json();
       if (!res.ok) return alert(data.error || "Journey orchestration conflict trace.");
       alert(`Journey created! Token: ${data.token}`);
+      
+      // Clear routing states completely to prevent validation locking on UI selections
       setAppointmentCart([]);
+      setSelectedDeptId('');
+      setSelectedDocId('');
+      
       fetchPatientItinerary(user.id);
     } catch(err) { console.error(err); }
   };
@@ -206,42 +259,49 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
-  const getPriorityStyle = (priority) => {
-    switch(priority) {
-      case 'EMERGENCY': return { bg: '#2d1418', border: '#e74c3c', text: '#ff7675' };
-      case 'HIGH': return { bg: '#2d2214', border: '#e67e22', text: '#f39c12' };
-      case 'MEDIUM': return { bg: '#14202d', border: '#3498db', text: '#74b9ff' };
-      default: return { bg: '#1c1f26', border: '#4b5563', text: '#9ca3af' };
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'COMPLETED': return '#10b981'; 
+      case 'CALLED': return '#00f2fe';    
+      case 'WAITING': return '#fbbf24';   
+      default: return '#94a3b8';
     }
   };
 
   return (
-    <div style={{ background: '#0b0e14', color: '#d1d5db', minHeight: '100vh', fontFamily: 'monospace', padding: '0 0 40px 0' }}>
+    <div style={{ background: '#060913', color: '#ffffff', minHeight: '100vh', fontFamily: "'Plus Jakarta Sans', sans-serif", padding: '0 0 60px 0' }}>
       
-      {/* Telemetry Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111622', padding: '16px 40px', borderBottom: '1px solid #1f293d' }}>
-        <h1 style={{ fontSize: '1.1rem', color: '#fff', margin: 0, letterSpacing: '1px' }}>SYS.CURAFLOW // V4.0</h1>
-        <div style={{ display: 'flex', gap: '25px', alignItems: 'center' }}>
-          
+      {/* High-Contrast Glassmorphism Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(15, 21, 36, 0.9)', backdropFilter: 'blur(16px)', padding: '16px 40px', borderBottom: '1px solid rgba(255,255,255,0.1)', position: 'sticky', top: 0, zIndex: 100 }}>
+        <h1 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#ffffff', margin: 0, letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ background: 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)', width: '12px', height: '12px', borderRadius: '50%' }}></span>
+          CuraFlow <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: '#94a3b8', fontWeight: 500 }}>v4.0</span>
+        </h1>
+        
+        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
           {user && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#0b0e14', padding: '4px 12px', borderRadius: '6px', border: '1px solid #1f293d' }}>
-              <span style={{ fontSize: '0.75rem', color: '#8a99ad' }}>
-                ID: <strong style={{ color: '#fff' }}>{user.username.toUpperCase()}</strong> ({user.role})
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#060913', padding: '6px 14px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.12)' }}>
+              <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                Session Node: <strong style={{ color: '#ffffff' }}>{user.username}</strong> ({user.role})
               </span>
-              <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff7675', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold', padding: '0 0 0 8px', borderLeft: '1px solid #1f293d' }}>
-                [LOGOUT]
+              <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#f43f5e', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, padding: '0 0 0 10px', borderLeft: '1px solid rgba(255,255,255,0.2)' }}>
+                Logout
               </button>
             </div>
           )}
 
-          <span style={{ padding: '2px 8px', borderRadius: '4px', border: `1px solid ${isConnected ? '#2ecc71' : '#e74c3c'}`, color: isConnected ? '#2ecc71' : '#e74c3c', fontSize: '0.75rem' }}>
-            {isConnected ? "● NET_OK" : "▲ NET_ERR"}
+          <span style={{ padding: '5px 14px', borderRadius: '20px', fontWeight: 700, background: isConnected ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)', color: isConnected ? '#10b981' : '#f43f5e', fontSize: '0.75rem', border: `1px solid ${isConnected ? '#10b981' : '#f43f5e'}` }}>
+            {isConnected ? "● Network Online" : "▲ Network Failure"}
           </span>
           
-          <div style={{ background: '#0b0e14', padding: '3px', borderRadius: '6px', display: 'flex', border: '1px solid #1f293d' }}>
-            {['monitor', 'doctor', 'patient'].map((v) => (
-              <button key={v} onClick={() => setActiveView(v)} style={{ padding: '6px 14px', background: activeView === v ? '#1f293d' : 'transparent', color: activeView === v ? '#00ced1' : '#576574', border: 'none', cursor: 'pointer', fontSize: '0.75rem' }}>
-                {v === 'monitor' ? 'DEPT_TV' : v === 'doctor' ? 'CTRL_STATION' : 'USER_PORTAL'}
+          <div style={{ background: '#060913', padding: '4px', borderRadius: '24px', display: 'flex', border: '1px solid rgba(255,255,255,0.1)' }}>
+            {[
+              { id: 'monitor', label: 'Monitor Grid' },
+              { id: 'doctor', label: 'Doctor Hub' },
+              { id: 'patient', label: 'User Portal' }
+            ].map((v) => (
+              <button key={v.id} onClick={() => setActiveView(v.id)} style={{ padding: '8px 18px', borderRadius: '20px', background: activeView === v.id ? 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' : 'transparent', color: activeView === v.id ? '#060913' : '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700 }}>
+                {v.label}
               </button>
             ))}
           </div>
@@ -249,52 +309,60 @@ function App() {
       </div>
 
       {activeNotification && (
-        <div style={{ background: '#2d1418', color: '#ff7675', borderBottom: '1px solid #e74c3c', padding: '14px 40px', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>{activeNotification}</span>
-          <button onClick={() => setActiveNotification(null)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}>[DISMISS]</button>
+        <div style={{ background: 'rgba(244, 63, 94, 0.2)', color: '#ffffff', borderBottom: '2px solid #f43f5e', padding: '16px 40px', fontSize: '0.95rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backdropFilter: 'blur(10px)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>🚨 Called Alert: {activeNotification}</span>
+          <button onClick={() => setActiveNotification(null)} style={{ background: '#f43f5e', border: 'none', color: '#ffffff', padding: '4px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Dismiss</button>
         </div>
       )}
 
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '40px' }}>
         
-        {/* VIEW 1: DYNAMIC MONITORS WITH INTELLIGENT REAL-TIME ETA OVERLAYS */}
+        {/* VIEW 1: MONITOR GRID */}
         {activeView === 'monitor' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1f293d', paddingBottom: '15px', marginBottom: '35px' }}>
-              <h2>[DEPT_LIVE_SCREEN_MATRIX]</h2>
-              <select value={tvSelectedDept} onChange={e => setTvSelectedDept(Number(e.target.value))} style={{ background: '#111622', color: '#00ced1', border: '1px solid #1f293d', padding: '6px', fontFamily: 'monospace', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid rgba(255,255,255,0.1)', paddingBottom: '20px', marginBottom: '35px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 700, color: '#ffffff' }}>Operational Corridor Matrix</h2>
+                <p style={{ margin: '4px 0 0 0', color: '#94a3b8', fontSize: '0.875rem' }}>Real-time queue sequencing grids per medical ward area.</p>
+              </div>
+              <select value={tvSelectedDept} onChange={e => setTvSelectedDept(Number(e.target.value))} style={{ background: '#0f1524', color: '#00f2fe', border: '2px solid rgba(255,255,255,0.15)', padding: '10px 20px', borderRadius: '10px', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 700 }}>
                 {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name.toUpperCase()}</option>)}
               </select>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '35px' }}>
               {systemDocs.filter(d => Number(d.department_id) === Number(tvSelectedDept)).map(doc => {
                 const docQueue = queue.filter(p => Number(p.doctor_id) === Number(doc.id));
-                // ENHANCED MATRIX CALCULATOR: Uses actual historical average shift speeds rather than hardcoded metrics
                 const dynamicWaitTime = docQueue.filter(p => p.status === 'WAITING').length * (doc.average_speed || 15);
                 
                 return (
-                  <div key={doc.id} style={{ background: '#111622', border: '1px solid #1f293d', borderRadius: '8px', padding: '24px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px dashed #1f293d', paddingBottom: '12px', marginBottom: '20px' }}>
-                      <h3 style={{ margin: 0, color: '#fff' }}>👩‍⚕️ {doc.name.toUpperCase()} (Room {doc.room_number})</h3>
-                      <div style={{ display: 'flex', gap: '20px', fontSize: '0.8rem' }}>
-                        <span style={{ color: '#8a99ad' }}>⚡ SPEED: {doc.average_speed || 15} MIN/PATIENT</span>
-                        <span style={{ color: '#00ced1', fontWeight: 'bold' }}>EST_WAIT: ~{dynamicWaitTime} MINS</span>
+                  <div key={doc.id} style={{ background: '#0f1524', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '30px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.4)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '16px', marginBottom: '24px' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 600, color: '#ffffff' }}>Dr. {doc.name.toUpperCase()} <span style={{ fontSize: '0.95rem', color: '#94a3b8', fontWeight: 400, marginLeft: '8px' }}>• Room {doc.room_number}</span></h3>
+                      <div style={{ display: 'flex', gap: '14px', fontSize: '0.85rem' }}>
+                        <span style={{ color: '#ffffff', background: 'rgba(255,255,255,0.06)', padding: '6px 14px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.08)' }}>Checkup Velocity: <strong>{doc.average_speed || 15}m</strong></span>
+                        <span style={{ color: '#00f2fe', background: 'rgba(0,242,254,0.1)', padding: '6px 14px', borderRadius: '20px', fontWeight: 700, border: '1px solid rgba(0,242,254,0.2)' }}>Est. Wait: ~{dynamicWaitTime} mins</span>
                       </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '15px' }}>
-                      {docQueue.length === 0 ? <p style={{ color: '#4b5563', margin: 0, fontSize: '0.8rem' }}>NO ACTIVE TICKETS ENQUEUED.</p> : 
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '20px' }}>
+                      {docQueue.length === 0 ? (
+                        <p style={{ color: '#576574', margin: 0, fontSize: '0.95rem', gridColumn: '1/-1' }}>No active ticket items assigned in this lane grid.</p>
+                      ) : (
                         docQueue.map(p => (
-                          <div key={p.id} style={{ background: p.status === 'CALLED' ? '#12252e' : '#0b0e14', border: p.status === 'CALLED' ? '1px solid #00ced1' : '1px solid #1f293d', padding: '20px', borderRadius: '6px', animation: p.status === 'CALLED' ? 'pulse-border 2s infinite ease-in-out' : 'none' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', marginBottom: '8px' }}>
-                              <span style={{ color: p.status === 'CALLED' ? '#00ced1' : '#576574' }}>{p.status === 'CALLED' ? '◀ PROCEED TO ROOM' : '📟 WAITING'}</span>
-                              <span style={{ background: '#1f293d', color: '#fff', padding: '1px 5px' }}>{p.status}</span>
+                          <div key={p.id} className={p.status === 'CALLED' ? 'pulse-card-active' : ''} style={{ background: p.status === 'CALLED' ? 'rgba(0,242,254,0.06)' : '#060913', border: p.status === 'CALLED' ? '2px solid #00f2fe' : '1px solid rgba(255,255,255,0.1)', padding: '24px', borderRadius: '14px', position: 'relative' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: p.status === 'CALLED' ? '#00f2fe' : '#94a3b8', letterSpacing: '0.5px' }}>
+                                {p.status === 'CALLED' ? '⚡ PROCEED TO CORRIDOR' : '📟 ENQUEUED'}
+                              </span>
+                              <span style={{ fontSize: '0.75rem', color: getStatusColor(p.status), background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700 }}>
+                                {p.status}
+                              </span>
                             </div>
-                            <h4 style={{ margin: 0, fontSize: '1.8rem', color: '#fff', textAlign: 'center' }}>{p.token_number}</h4>
+                            <h4 style={{ margin: 0, fontSize: '2.4rem', fontWeight: 700, color: '#ffffff', textAlign: 'center', letterSpacing: '1px', fontFamily: "'JetBrains Mono', monospace" }}>{p.token_number}</h4>
                           </div>
                         ))
-                      }
+                      )}
                     </div>
                   </div>
                 );
@@ -303,132 +371,165 @@ function App() {
           </div>
         )}
 
-        {/* VIEW 2: ISOLATED DOCTOR CONSOLE */}
+        {/* VIEW 2: DOCTOR HUBS */}
         {activeView === 'doctor' && (
           <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-            {!user || user.role !== 'DOCTOR' ? <p style={{ color: '#576574' }}>ACCESS PROHIBITED. LOG INTO USER_PORTAL CONSOLE AS A DOCTOR.</p> : (
+            {!user || user.role !== 'DOCTOR' ? (
+              <div style={{ textAlign: 'center', padding: '50px', background: '#0f1524', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <p style={{ color: '#94a3b8', margin: 0, fontSize: '1rem' }}>Access Restricted. Log in inside the User Portal matching a verified Doctor credentials context.</p>
+              </div>
+            ) : (
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '20px', marginBottom: '30px' }}>
-                  <div style={{ background: '#111622', padding: '24px', borderRadius: '8px', border: '1px solid #1f293d' }}>
-                    <h2>{user.doctorInfo?.name.toUpperCase()} // Room {user.doctorInfo?.room_number}</h2>
-                    <span style={{ color: '#00ced1', fontSize: '0.75rem' }}>ISOLATED CLINIC QUEUE ENGINE RUNNING</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: '24px', marginBottom: '35px' }}>
+                  <div style={{ background: '#0f1524', padding: '30px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 700, color: '#ffffff' }}>Dr. {user.doctorInfo?.name.toUpperCase()}</h2>
+                    <p style={{ margin: '6px 0 0 0', color: '#00f2fe', fontSize: '0.9rem', fontWeight: 700 }}>Active Station Operator Console • Room ID {user.doctorInfo?.room_number}</p>
                   </div>
-                  <button onClick={handleCallNext} style={{ background: '#1f293d', color: '#00ced1', border: '1px solid #00ced1', borderRadius: '8px', cursor: 'pointer', fontWeight: '700' }}>⚡ DISPATCH NEXT REQ</button>
+                  <button onClick={handleCallNext} style={{ background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: '#060913', border: 'none', borderRadius: '16px', cursor: 'pointer', fontWeight: 800, fontSize: '1rem', boxShadow: '0 4px 20px rgba(0,242,254,0.3)' }}>
+                    🚀 Dispatch Next Token
+                  </button>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {queue.length === 0 ? <p style={{ color: '#4b5563' }}>NO WAITING APPOINTMENTS ASSIGNED TO YOUR WORKSPACE TODAY.</p> :
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#94a3b8', margin: '0 0 4px 0' }}>Your Corridor Lane Rows</h3>
+                  {queue.length === 0 ? (
+                    <div style={{ background: '#0f1524', padding: '40px', borderRadius: '14px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <p style={{ color: '#576574', margin: 0 }}>No active enqueued lanes linked to your clinic node today.</p>
+                    </div>
+                  ) : (
                     queue.map((p) => (
-                      <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#111622', padding: '14px 20px', borderRadius: '6px', border: '1px solid #1f293d' }}>
-                        <span style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 'bold' }}>&gt; {p.token_number}</span>
-                        <div>
+                      <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0f1524', padding: '22px 30px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <span style={{ fontSize: '1.4rem', color: '#ffffff', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>&gt; {p.token_number}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                          <span style={{ fontSize: '0.85rem', color: getStatusColor(p.status), background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '6px', fontWeight: 700 }}>{p.status}</span>
                           {p.status === 'CALLED' && (
-                            <button onClick={() => handleCompleteStep(p.id, p.itinerary_id)} style={{ padding: '6px 12px', background: '#2ecc71', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px', marginRight: '10px' }}>✓ DISCHARGE & ROUTE NEXT</button>
+                            <button onClick={() => handleCompleteStep(p.id, p.itinerary_id)} style={{ padding: '12px 24px', background: '#10b981', color: '#ffffff', border: 'none', cursor: 'pointer', fontWeight: 700, borderRadius: '10px', boxShadow: '0 4px 15px rgba(16,185,129,0.3)' }}>
+                              ✓ Discharge & Route Next
+                            </button>
                           )}
-                          <span style={{ fontSize: '0.8rem', color: '#576574' }}>{p.status}</span>
                         </div>
                       </div>
                     ))
-                  }
+                  )}
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* VIEW 3: USER PORTAL GATEWAY */}
+        {/* VIEW 3: USER PORTAL */}
         {activeView === 'patient' && (
-          <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+          <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
             {!user ? (
-              <div style={{ maxWidth: '450px', margin: '0 auto', background: '#111622', padding: '35px', borderRadius: '12px', border: '1px solid #1f293d' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-around', marginBottom: '25px', borderBottom: '1px solid #1f293d', paddingBottom: '10px' }}>
-                  <button onClick={() => setAuthMode('login')} style={{ background: 'transparent', border: 'none', color: authMode === 'login' ? '#00ced1' : '#576574', cursor: 'pointer', fontWeight: '700' }}>[01_SIGN_IN]</button>
-                  <button onClick={() => setAuthMode('signup')} style={{ background: 'transparent', border: 'none', color: authMode === 'signup' ? '#00ced1' : '#576574', cursor: 'pointer', fontWeight: '700' }}>[02_REGISTRATION]</button>
+              <div style={{ maxWidth: '460px', margin: '40px auto 0 auto', background: '#0f1524', padding: '40px', borderRadius: '24px', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 15px 35px rgba(0,0,0,0.5)' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', marginBottom: '35px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '16px' }}>
+                  <button onClick={() => setAuthMode('login')} style={{ background: 'transparent', border: 'none', color: authMode === 'login' ? '#00f2fe' : '#94a3b8', cursor: 'pointer', fontWeight: 700, fontSize: '1.05rem' }}>Sign In</button>
+                  <button onClick={() => setAuthMode('signup')} style={{ background: 'transparent', border: 'none', color: authMode === 'signup' ? '#00f2fe' : '#94a3b8', cursor: 'pointer', fontWeight: 700, fontSize: '1.05rem' }}>Register Account</button>
                 </div>
                 
-                <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  {authMode === 'signup' && <input type="text" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} style={{ padding: '12px', background: '#0b0e14', border: '1px solid #1f293d', color: '#fff', borderRadius: '6px', fontFamily: 'monospace' }} required />}
-                  <input type="email" placeholder="Corporate Identity Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', background: '#0b0e14', border: '1px solid #1f293d', color: '#fff', borderRadius: '6px', fontFamily: 'monospace' }} required />
-                  <input type="password" placeholder="Password PIN" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', background: '#0b0e14', border: '1px solid #1f293d', color: '#fff', borderRadius: '6px', fontFamily: 'monospace' }} required />
+                <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {authMode === 'signup' && (
+                    <input type="text" placeholder="Username / Handle" value={username} onChange={e => setUsername(e.target.value)} style={{ padding: '14px 18px', background: '#060913', border: '1px solid rgba(255,255,255,0.15)', color: '#ffffff', borderRadius: '10px', fontSize: '0.95rem' }} required />
+                  )}
+                  <input type="email" placeholder="Identity Email Address" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '14px 18px', background: '#060913', border: '1px solid rgba(255,255,255,0.15)', color: '#ffffff', borderRadius: '10px', fontSize: '0.95rem' }} required />
+                  <input type="password" placeholder="Account Access PIN" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '14px 18px', background: '#060913', border: '1px solid rgba(255,255,255,0.15)', color: '#ffffff', borderRadius: '10px', fontSize: '0.95rem' }} required />
                   
                   {authMode === 'signup' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '0.85rem' }}>
-                        <span>ROLE SELECTION:</span>
-                        <select value={userRole} onChange={e => setUserRole(e.target.value)} style={{ background: '#0b0e14', color: '#00ced1', border: '1px solid #1f293d', padding: '4px', fontFamily: 'monospace' }}>
-                          <option value="PATIENT">PATIENT_CLIENT</option>
-                          <option value="DOCTOR">DOCTOR_OPERATOR</option>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.95rem' }}>
+                        <span style={{ color: '#94a3b8' }}>Select Gateway Role:</span>
+                        <select value={userRole} onChange={e => setUserRole(e.target.value)} style={{ background: '#060913', color: '#00f2fe', border: '1px solid rgba(255,255,255,0.15)', padding: '6px 12px', borderRadius: '6px', fontWeight: 700 }}>
+                          <option value="PATIENT">Patient Profile</option>
+                          <option value="DOCTOR">Doctor Operator</option>
                         </select>
                       </div>
 
                       {userRole === 'DOCTOR' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '12px', background: 'rgba(0, 206, 209, 0.03)', border: '1px dashed #1f293d', borderRadius: '6px', fontSize: '0.8rem' }}>
-                          <span style={{ color: '#00ced1' }}>[MANDATORY_DOCTOR_ASSIGNMENT_METADATA]</span>
-                          <span style={{ marginTop: '5px' }}>SELECT DEPLOYMENT WARD DEPARTMENT:</span>
-                          <select value={selectedDeptId} onChange={e => setSelectedDeptId(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '8px', border: '1px solid #1f293d', borderRadius: '4px', fontFamily: 'monospace' }} required>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px', background: 'rgba(0, 242, 254, 0.03)', border: '1px dashed rgba(0, 242, 254, 0.3)', borderRadius: '10px' }}>
+                          <span style={{ color: '#00f2fe', fontSize: '0.85rem', fontWeight: 700 }}>Operator Metadata Context</span>
+                          <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Select Assigned Deployment Ward:</span>
+                          <select value={selectedDeptId} onChange={e => setSelectedDeptId(e.target.value)} style={{ background: '#060913', color: '#ffffff', padding: '10px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px' }} required>
                             {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                           </select>
                         </div>
                       )}
                     </div>
                   )}
-                  <button type="submit" style={{ padding: '12px', background: '#00ced1', color: '#0b0e14', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', textTransform: 'uppercase', fontSize: '0.8rem' }}>EXECUTE SUBMIT REQUEST</button>
+                  <button type="submit" style={{ padding: '14px', background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: '#060913', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: '0.95rem', marginTop: '10px' }}>
+                    Confirm Request
+                  </button>
                 </form>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '40px' }}>
                 
-                {/* Left Component: Cart */}
-                <div style={{ background: '#111622', padding: '30px', borderRadius: '12px', border: '1px solid #1f293d' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#576574' }}>SESSION ACTIVE // {user.role}</div>
-                  <h3 style={{ margin: '5px 0 25px 0', color: '#fff' }}>IDENTITY: {user.username.toUpperCase()}</h3>
+                {/* Left Panel: Request Infrastructure */}
+                <div style={{ background: '#0f1524', padding: '35px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#00f2fe', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Active Identity Token</div>
+                  <h3 style={{ margin: '4px 0 30px 0', fontSize: '1.5rem', fontWeight: 700, color: '#ffffff' }}>{user.username.toUpperCase()}</h3>
                   
                   {user.role === 'PATIENT' ? (
                     <div>
-                      <h4>[COMPILE COMPREHENSIVE PATH JOURNEY]</h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
-                        <select value={selectedDeptId} onChange={e => { setSelectedDeptId(e.target.value); setSelectedDocId(''); }} style={{ background: '#0b0e14', color: '#fff', padding: '10px', border: '1px solid #1f293d' }}>
-                          <option value="">-- SELECT CLINIC WARD --</option>
+                      <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 600, color: '#ffffff' }}>Compile Route Pipeline</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <select value={selectedDeptId} onChange={e => { setSelectedDeptId(e.target.value); setSelectedDocId(''); }} style={{ background: '#060913', color: '#ffffff', padding: '12px 16px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', fontSize: '0.9rem' }}>
+                          <option value="">-- Choose Target Ward Corridor --</option>
                           {systemDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
 
-                        <select value={selectedDocId} onChange={e => setSelectedDocId(e.target.value)} style={{ background: '#0b0e14', color: '#fff', padding: '10px', border: '1px solid #1f293d' }} required>
-                          <option value="">-- SELECT SPECIALIST TARGET --</option>
+                        <select value={selectedDocId} onChange={e => setSelectedDocId(e.target.value)} style={{ background: '#060913', color: '#ffffff', padding: '12px 16px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', fontSize: '0.9rem' }} required>
+                          <option value="">-- Choose Specialist Practitioner --</option>
                           {systemDocs.filter(d => Number(d.department_id) === Number(selectedDeptId)).map(doc => <option key={doc.id} value={doc.id}>{doc.name}</option>)}
                         </select>
 
-                        <button type="button" onClick={addToCart} style={{ padding: '10px', background: '#1f293d', color: '#00ced1', border: '1px solid #00ced1', cursor: 'pointer', fontWeight: 'bold' }}>+ ADD VISIT TO JOURNEY</button>
+                        <button type="button" onClick={addToCart} style={{ padding: '12px', background: 'rgba(255,255,255,0.04)', color: '#00f2fe', border: '1px solid rgba(0,242,254,0.3)', borderRadius: '10px', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem' }}>
+                          + Append Destination Stop Location
+                        </button>
                       </div>
 
                       {appointmentCart.length > 0 && (
-                        <div style={{ marginTop: '25px', padding: '15px', background: '#0b0e14', border: '1px dashed #1f293d' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#00ced1' }}>ROUTE PROGRESS SEQUENCE:</span>
-                          {appointmentCart.map((item, index) => <div key={index} style={{ fontSize: '0.85rem', color: '#fff', marginTop: '6px' }}>Stop {index+1}: {item.departmentName} ({item.doctorName})</div>)}
-                          <button onClick={dispatchMultiItinerary} style={{ width: '100%', marginTop: '15px', padding: '12px', background: '#2ecc71', color: '#fff', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}>✓ BOOK OPTIMIZED JOURNEY</button>
+                        <div style={{ marginTop: '30px', padding: '24px', background: '#060913', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#00f2fe', letterSpacing: '0.5px' }}>ROUTE SEQUENCE DIRECTIONS MAP:</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '14px' }}>
+                            {appointmentCart.map((item, index) => (
+                              <div key={index} style={{ fontSize: '0.9rem', color: '#ffffff', background: '#0f1524', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)', borderLeft: '4px solid #00f2fe' }}>
+                                Stop {index+1}: <strong>{item.departmentName.toUpperCase()}</strong> (Dr. {item.doctorName})
+                              </div>
+                            ))}
+                          </div>
+                          <button onClick={dispatchMultiItinerary} style={{ width: '100%', marginTop: '20px', padding: '14px', background: '#10b981', color: '#ffffff', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 15px rgba(16,185,129,0.3)' }}>
+                            ✓ Authorize Group Routing Journey
+                          </button>
                         </div>
                       )}
                     </div>
                   ) : (
-                    <p style={{ color: '#576574', fontSize: '0.85rem' }}>Logged in as Doctor operator. Use the upper navigation tabs to access your controller panels.</p>
+                    <p style={{ color: '#94a3b8', fontSize: '0.95rem', lineHeight: '1.6' }}>Logged into verified doctor operations control lines. Shift upper tab matrix layouts to view lane queue files.</p>
                   )}
-                  <button onClick={handleLogout} style={{ width: '100%', marginTop: '20px', padding: '10px', background: '#1c1f26', color: '#ff7675', border: 'none', cursor: 'pointer', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 'bold' }}>TERMINATE SESSION [LOGOUT]</button>
+                  <button onClick={handleLogout} style={{ width: '100%', marginTop: '30px', padding: '12px', background: 'transparent', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.25)', cursor: 'pointer', borderRadius: '10px', fontSize: '0.85rem', fontWeight: 700 }}>
+                    Disconnect Session Gateway
+                  </button>
                 </div>
 
-                {/* Right Component: Live Progress Metrics Tracker */}
-                <div style={{ background: '#111622', padding: '30px', borderRadius: '12px', border: '1px solid #1f293d' }}>
-                  <div style={{ borderBottom: '1px solid #1f293d', paddingBottom: '15px', marginBottom: '20px', fontSize: '0.85rem', color: '#fff' }}>[DAILY_CLINICAL_ITINERARY_TRACKER]</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {patientItinerary.length === 0 ? <p style={{ color: '#4b5563', fontSize: '0.85rem' }}>NO ENQUEUED WORKFLOW RECORDS ENCOUNTERED TODAY.</p> :
+                {/* Right Panel: Active Progress Tracker */}
+                <div style={{ background: '#0f1524', padding: '35px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '16px', marginBottom: '24px', fontSize: '1rem', fontWeight: 700, color: '#ffffff' }}>Daily Clinical Pipeline Monitor</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {patientItinerary.length === 0 ? (
+                      <p style={{ color: '#576574', fontSize: '0.95rem', margin: 0 }}>No dynamic clinical workflows generated for this instance handle today.</p>
+                    ) : (
                       patientItinerary.map((step, idx) => (
-                        <div key={idx} style={{ display: 'flex', alignItems: 'center', background: '#0b0e14', padding: '14px', borderRadius: '6px', border: step.status === 'CALLED' ? '1px solid #00ced1' : '1px solid #1f293d', justifyContent: 'space-between' }}>
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', background: '#060913', padding: '18px 22px', borderRadius: '12px', border: step.status === 'CALLED' ? '2px solid #00f2fe' : '1px solid rgba(255,255,255,0.08)', justifyContent: 'space-between', boxShadow: step.status === 'CALLED' ? '0 0 15px rgba(0,242,254,0.15)' : 'none' }}>
                           <div>
-                            <div style={{ color: '#fff', fontWeight: 'bold' }}>{step.step_sequence}. {step.department_name}</div>
-                            <div style={{ color: '#00ced1', fontSize: '0.75rem' }}>Doctor Ref: {step.doctor_name} (Room {step.room_number})</div>
+                            <div style={{ color: '#ffffff', fontWeight: 700, fontSize: '1rem' }}>{step.step_sequence}. {step.department_name.toUpperCase()}</div>
+                            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '2px' }}>Dr. {step.doctor_name} (Room {step.room_number})</div>
                           </div>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: step.status === 'COMPLETED' ? '#2ecc71' : step.status === 'CALLED' ? '#00ced1' : step.status === 'WAITING' ? '#f39c12' : '#4b5563' }}>{step.status}</span>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: getStatusColor(step.status), background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '20px' }}>
+                            {step.status}
+                          </span>
                         </div>
                       ))
-                    }
+                    )}
                   </div>
                 </div>
 
