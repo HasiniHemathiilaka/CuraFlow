@@ -11,8 +11,8 @@ pipeline {
         stage('Backend Validation') {
             steps {
                 dir('curaflow-backend') {
-                    // Using standard shell execution strings
-                    sh 'npm install'
+                    // Changed 'sh' to 'bat' for Windows environment mapping
+                    bat 'npm install'
                 }
             }
         }
@@ -20,16 +20,16 @@ pipeline {
         stage('Frontend Compilation Check') {
             steps {
                 dir('curaflow-frontend') {
-                    sh 'npm install'
-                    sh 'npm run build'
+                    bat 'npm install'
+                    bat 'npm run build'
                 }
             }
         }
 
         stage('Assemble Production Containers') {
             steps {
-                // Verifies your Docker layout maps cleanly without errors
-                sh 'docker compose build --parallel'
+                // Verifies your Docker Compose topology via Windows CLI execution
+                bat 'docker compose build --parallel'
             }
         }
     }
