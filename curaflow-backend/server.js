@@ -16,8 +16,9 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
+// UPDATED: Dynamically uses Docker internal network alias via DATABASE_URL environment parameter fallback
 const pool = new Pool({
-  user: 'postgres', host: 'localhost', database: 'CuraFlow', password: '1234', port: 5432,
+  connectionString: process.env.DATABASE_URL || 'postgres://postgres:1234@localhost:5432/CuraFlow'
 });
 
 io.on('connection', (socket) => {
@@ -187,7 +188,6 @@ app.post('/api/itinerary/create-multi', async (req, res) => {
     }
     loadedDepts.sort((a, b) => a.count - b.count);
 
-    // FIXED: Ensured parameter ordering matching the 7 expected columns correctly
     for (let i = 0; i < loadedDepts.length; i++) {
       const initialStatus = (i === 0) ? 'WAITING' : 'PENDING';
       await client.query(
@@ -269,7 +269,7 @@ app.patch('/api/queue/next', async (req, res) => {
     
     io.to(`user_${currentStep.patient_id}`).emit('appointment_called_alert', {
       token: currentStep.token_number, 
-      message: `🚨 Token ${currentStep.token_number} called! Proceed to ${currentStep.doc_name} in Room ${currentStep.room_number}.`
+      message: `🚨 Token ${currentStep.token_number} called! Proceed to ${currentStep.doc_name} in Room${currentStep.room_number}.`
     });
     
     io.emit('patient_movement_trigger', { itineraryId: currentStep.itinerary_id });

@@ -1,0 +1,42 @@
+services:
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: curaflow-db
+    environment:
+      POSTGRES_USER: curaflow_user
+      POSTGRES_PASSWORD: curaflow_secure_pass
+      POSTGRES_DB: curaflow_production
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+
+  backend:
+    build:
+      context: ./curaflow-backend
+      dockerfile: Dockerfile
+    container_name: curaflow-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgres://curaflow_user:curaflow_secure_pass@postgres-db:5432/curaflow_production
+      - PORT=5000
+      - NODE_ENV=production
+    depends_on:
+      - postgres-db
+    restart: always
+
+  frontend:
+    build:
+      context: ./curaflow-frontend
+      dockerfile: Dockerfile
+    container_name: curaflow-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  pgdata:

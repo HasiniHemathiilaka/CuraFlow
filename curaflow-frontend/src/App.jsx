@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = "http://127.0.0.1:5000";
+// UPDATED: Set explicit backend port target mapping to match your Docker network footprint
+const BACKEND_URL = "http://localhost:5000";
 const socket = io(BACKEND_URL);
 
 // Injection of ultra-high contrast dark mode tokens, readable typography, and bright action layouts
@@ -398,7 +399,7 @@ function App() {
                     </div>
                   ) : (
                     queue.map((p) => (
-                      <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0f1524', padding: '22px 30px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifycontent: 'space-between', background: '#0f1524', padding: '22px 30px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.1)' }}>
                         <span style={{ fontSize: '1.4rem', color: '#ffffff', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>&gt; {p.token_number}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                           <span style={{ fontSize: '0.85rem', color: getStatusColor(p.status), background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '6px', fontWeight: 700 }}>{p.status}</span>
